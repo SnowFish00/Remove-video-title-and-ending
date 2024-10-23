@@ -96,16 +96,25 @@ def process_video_concurrently(video_file, folder_path, cut_folder_path, output_
     header_image_path = os.path.join(cut_folder_path, 'header-after.png')
     tail_image_path = os.path.join(cut_folder_path, 'tail-before.png')
     input_video_path = os.path.join(folder_path, video_file)
-    output_video_path = os.path.join(output_folder_path, video_file)
 
-    # 检查输出目录是否已存在同名视频文件
-    if os.path.exists(output_video_path):
+    # 修改输出路径，添加 -processing 后缀
+    output_video_path = os.path.join(
+        output_folder_path, video_file.replace('.mp4', '-processing.mp4'))
+
+    # 检查输出目录是否已存在同名视频文件，且排除 -processing 的文件
+    existing_files = os.listdir(output_folder_path)
+    if video_file in existing_files or video_file.replace('.mp4', '-processing.mp4') in existing_files:
         print(f"输出目录已存在视频文件，跳过处理: {output_video_path}")
         return
 
     if os.path.exists(header_image_path) and os.path.exists(tail_image_path):
         process_video(input_video_path, header_image_path,
                       tail_image_path, output_video_path)
+
+        # 处理完成后，重命名输出文件
+        final_output_video_path = os.path.join(output_folder_path, video_file)
+        os.rename(output_video_path, final_output_video_path)
+
     else:
         print(f"图片文件缺失，跳过视频文件: {video_file}")
 

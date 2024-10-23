@@ -1,11 +1,13 @@
+import time
 from concurrent.futures import ThreadPoolExecutor
 from moviepy.editor import VideoFileClip
 import concurrent
 import cv2
 import numpy as np
-from moviepy.editor import VideoFileClip
 import os
 from tqdm import tqdm
+from queue import Queue, Empty
+import threading
 
 
 def resize_image_to_video(image, video_frame):
@@ -92,45 +94,77 @@ def process_video(input_video_path, header_img_path, tail_img_path, output_video
         output_video_path, codec="libx264", audio_codec='aac', audio=True)
 
 
-def process_video_concurrently(video_file, folder_path, cut_folder_path, output_folder_path):
+def process_video_concurrently(video_file, folder_path, cut_folder_path, output_folder_path, processing_set):
     header_image_path = os.path.join(cut_folder_path, 'header-after.png')
     tail_image_path = os.path.join(cut_folder_path, 'tail-before.png')
     input_video_path = os.path.join(folder_path, video_file)
-    output_video_path = os.path.join(output_folder_path, video_file)
 
-    # 检查输出目录是否已存在同名视频文件
-    if os.path.exists(output_video_path):
-        print(f"输出目录已存在视频文件，跳过处理: {output_video_path}")
+    output_video_path = os.path.join(
+        output_folder_path, video_file.replace('.mp4', '-processing.mp4'))
+
+    if video_file in processing_set:
+        print(f"文件已在处理队列中，跳过处理: {video_file}")
         return
 
     if os.path.exists(header_image_path) and os.path.exists(tail_image_path):
-        process_video(input_video_path, header_image_path,
-                      tail_image_path, output_video_path)
+        processing_set.add(video_file)
+        try:
+            process_video(input_video_path, header_image_path,
+                          tail_image_path, output_video_path)
+            # 处理完成后，重命名输出文件
+            final_output_video_path = os.path.join(
+                output_folder_path, video_file)
+            os.rename(output_video_path, final_output_video_path)
+            print(f"处理完成: {video_file}")
+        finally:
+            processing_set.remove(video_file)
     else:
         print(f"图片文件缺失，跳过视频文件: {video_file}")
 
 
-def process_all_videos_concurrently(input_video_dir, cut_image_dir, output_video_dir):
-    video_files = []
-    for folder_name in os.listdir(input_video_dir):
-        folder_path = os.path.join(input_video_dir, folder_name)
-        if os.path.isdir(folder_path):
-            for video_file in os.listdir(folder_path):
-                if video_file.lower().endswith('.mp4'):
-                    video_files.append((video_file, folder_path, os.path.join(
-                        cut_image_dir, folder_name), os.path.join(output_video_dir, folder_name)))
+def monitor_directory(input_video_dir, cut_image_dir, output_video_dir, processing_set, queue):
+    """监控输入目录以添加新视频文件到处理队列"""
+    processed_files = set()
+    while True:
+        for folder_name in os.listdir(input_video_dir):
+            folder_path = os.path.join(input_video_dir, folder_name)
+            if os.path.isdir(folder_path):
+                for video_file in os.listdir(folder_path):
+                    if video_file.lower().endswith('.mp4') and video_file not in processed_files:
+                        processed_files.add(video_file)
+                        queue.put((video_file, folder_path, os.path.join(
+                            cut_image_dir, folder_name), os.path.join(output_video_dir, folder_name)))
+        time.sleep(2)  # 每隔2秒检查一次目录
 
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        # 使用tqdm创建进度条
-        futures = [executor.submit(
-            process_video_concurrently, *video_info) for video_info in video_files]
-        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures)):
-            pass  # 等待所有任务完成
+
+def worker(queue, processing_set):
+    """处理队列中的视频文件"""
+    while True:
+        try:
+            video_info = queue.get(timeout=3)  # 设置超时防止卡住
+            process_video_concurrently(*video_info, processing_set)
+            queue.task_done()
+        except Empty:
+            break
 
 
 def main_concurrent(input_video_dir, cut_image_dir, output_video_dir):
-    process_all_videos_concurrently(
-        input_video_dir, cut_image_dir, output_video_dir)
+    queue = Queue()
+    processing_set = set()
+
+    # 启动监控线程
+    monitor_thread = threading.Thread(target=monitor_directory, args=(
+        input_video_dir, cut_image_dir, output_video_dir, processing_set, queue), daemon=True)
+    monitor_thread.start()
+
+    while True:
+        # 启动多个工作线程来处理队列中的任务
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(
+                worker, queue, processing_set) for _ in range(10)]
+            for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Processing"):
+                pass  # 等待所有任务完成
+        time.sleep(5)  # 每5秒检查队列是否有新任务
 
 
 if __name__ == "__main__":
