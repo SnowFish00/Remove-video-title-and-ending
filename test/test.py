@@ -136,7 +136,7 @@ def is_file_completed(filepath, check_interval=0.1):
 
     current_size_now = os.path.getsize(filepath)
 
-    if current_size == current_size_now:  # 如果文件大小不变，认为传输完成
+    if current_size == current_size_now and current_size_now != 0:  # 如果文件大小不变且不为0，认为传输完成
         return True
 
     return False
