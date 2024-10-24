@@ -1,3 +1,4 @@
+import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
 from moviepy.editor import VideoFileClip
@@ -44,6 +45,19 @@ def find_first_match_frame(video_frames, tail_gray, tolerance=0.5):
     return -1
 
 
+def cut_video(input_video_path, start_time, end_time, output_video_path):
+    duration = end_time - start_time  # 计算持续时间
+    command = [
+        'ffmpeg',
+        '-ss', str(start_time),  # 开始时间
+        '-i', input_video_path,  # 输入视频文件
+        '-t', str(duration),  # 持续时间
+        '-c', 'copy',  # 直接复制不重新编码
+        output_video_path  # 输出视频文件
+    ]
+    subprocess.run(command)
+
+
 def process_video(input_video_path, header_img_path, tail_img_path, output_video_path):
     # 加载视频
     clip = VideoFileClip(input_video_path)
@@ -78,21 +92,20 @@ def process_video(input_video_path, header_img_path, tail_img_path, output_video
     header_cut_time = last_header_frame_idx / fps
     print(f"最后一帧匹配 header 的时间: {header_cut_time} 秒")
 
-    # 从最后匹配帧开始，删除该帧前所有帧和该帧之后 0.1 秒的所有帧
-    header_final_cut_time = header_cut_time + 0.1
+    # 从最后匹配帧开始，删除该帧前所有帧和该帧之后 0 秒的所有帧
+    header_final_cut_time = header_cut_time + 0
 
     # 查找第一帧匹配 tail 的位置
     first_tail_frame_idx = find_first_match_frame(back_frames, tail_gray)
     tail_cut_time = clip.duration - back_duration + first_tail_frame_idx / fps
     print(f"第一帧匹配 tail 的时间: {tail_cut_time} 秒")
 
-    # 从第一匹配帧开始，删除该帧后所有帧和该帧之前 0.1 秒的所有帧
-    tail_final_cut_time = tail_cut_time - 0.1
+    # 从第一匹配帧开始，删除该帧后所有帧和该帧之前 0.2 秒的所有帧
+    tail_final_cut_time = tail_cut_time - 0.2
 
     # 删除不需要的帧，导出处理后的视频
-    final_clip = clip.subclip(header_final_cut_time, tail_final_cut_time)
-    final_clip.write_videofile(
-        output_video_path, codec="libx264", audio_codec='aac', audio=True)
+    cut_video(input_video_path, header_final_cut_time,
+              tail_final_cut_time, output_video_path)
 
 
 def process_video_concurrently(video_file, folder_path, cut_folder_path, output_folder_path, processing_set):
