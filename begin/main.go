@@ -7,7 +7,7 @@ import (
 
 func main() {
 	// 定义要执行的命令
-	cmd := exec.Command("python3", "../project/list-bar.py")
+	cmd := exec.Command("python3", "../project/list-bar-v5.py")
 
 	// 获取命令的标准输出和标准错误输出
 	output, err := cmd.CombinedOutput()
