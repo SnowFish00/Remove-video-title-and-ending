@@ -10,6 +10,7 @@ from queue import Queue, Empty
 import threading
 import sys
 import select
+import shutil
 
 
 def resize_image_to_video(image, video_frame):
@@ -45,20 +46,7 @@ def find_first_match_frame(video_frames, tail_gray, tolerance=0.5):
     return -1
 
 
-def cut_video(input_video_path, start_time, end_time, output_video_path):
-    duration = end_time - start_time  # 计算持续时间
-    command = [
-        'ffmpeg',
-        '-ss', str(start_time),  # 开始时间
-        '-i', input_video_path,  # 输入视频文件
-        '-t', str(duration),  # 持续时间
-        '-c', 'copy',  # 直接复制不重新编码
-        output_video_path  # 输出视频文件
-    ]
-    subprocess.run(command)
-
-
-def process_video(input_video_path, header_img_path, tail_img_path, output_video_path):
+def process_video(video_file, input_video_path, output_video_base):
     # 加载视频
     clip = VideoFileClip(input_video_path)
     fps = clip.fps
@@ -69,73 +57,66 @@ def process_video(input_video_path, header_img_path, tail_img_path, output_video
     front_clip = clip.subclip(0, front_duration)
     back_clip = clip.subclip(clip.duration - back_duration, clip.duration)
 
-    # 加载图片并调整大小
-    header_img = cv2.imread(header_img_path)
-    tail_img = cv2.imread(tail_img_path)
+    for cut_class in subdirectories:
+        # 加载图片并调整大小
+        header_img = cv2.imread(os.path.join(
+            cut_image_dir), cut_class, 'header-after.png')
+        tail_img = cv2.imread(os.path.join(cut_image_dir),
+                              cut_class, 'tail-before.png')
+        first_frame = front_clip.get_frame(0)
+        header_resized = resize_image_to_video(header_img, first_frame)
+        tail_resized = resize_image_to_video(tail_img, first_frame)
 
-    first_frame = front_clip.get_frame(0)
-    header_resized = resize_image_to_video(header_img, first_frame)
-    tail_resized = resize_image_to_video(tail_img, first_frame)
+        # 将图片转换为灰度图
+        header_gray = get_gray_image(header_resized)
+        tail_gray = get_gray_image(tail_resized)
 
-    # 将图片转换为灰度图
-    header_gray = get_gray_image(header_resized)
-    tail_gray = get_gray_image(tail_resized)
+        # 提取视频帧
+        front_frames = [front_clip.get_frame(
+            t) for t in np.arange(0, front_duration, 1 / fps)]
+        back_frames = [back_clip.get_frame(
+            t) for t in np.arange(0, back_duration, 1 / fps)]
 
-    # 提取视频帧
-    front_frames = [front_clip.get_frame(
-        t) for t in np.arange(0, front_duration, 1 / fps)]
-    back_frames = [back_clip.get_frame(
-        t) for t in np.arange(0, back_duration, 1 / fps)]
+        # 查找最后一帧匹配 header 的位置
+        last_header_frame_idx = find_last_match_frame(
+            front_frames, header_gray)
+        # 查找第一帧匹配 tail 的位置
+        first_tail_frame_idx = find_first_match_frame(back_frames, tail_gray)
 
-    # 查找最后一帧匹配 header 的位置
-    last_header_frame_idx = find_last_match_frame(front_frames, header_gray)
-    header_cut_time = last_header_frame_idx / fps
-    print(f"最后一帧匹配 header 的时间: {header_cut_time} 秒")
+        if first_tail_frame_idx > 0 and last_header_frame_idx > 0:
+            output_path_final = os.path.join(
+                output_video_base, cut_class, (video_file[:-4] + '-processing.mp4'))
+            shutil.move(input_video_path, output_path_final)
+            return output_path_final
 
-    # 从最后匹配帧开始，删除该帧前所有帧和该帧之后 0 秒的所有帧
-    header_final_cut_time = header_cut_time + 0
-
-    # 查找第一帧匹配 tail 的位置
-    first_tail_frame_idx = find_first_match_frame(back_frames, tail_gray)
-    tail_cut_time = clip.duration - back_duration + first_tail_frame_idx / fps
-    print(f"第一帧匹配 tail 的时间: {tail_cut_time} 秒")
-
-    # 从第一匹配帧开始，删除该帧后所有帧和该帧之前 0.2 秒的所有帧
-    tail_final_cut_time = tail_cut_time - 0.2
-
-    # 删除不需要的帧，导出处理后的视频
-    cut_video(input_video_path, header_final_cut_time,
-              tail_final_cut_time, output_video_path)
+    print(f"匹配失败，视频{video_file}未找到相关水印")
+    return ""
 
 
-def process_video_concurrently(video_file, folder_path, cut_folder_path, output_folder_path, processing_set):
-    header_image_path = os.path.join(cut_folder_path, 'header-after.png')
-    tail_image_path = os.path.join(cut_folder_path, 'tail-before.png')
-    input_video_path = os.path.join(folder_path, video_file)
+def process_video_concurrently(video_file, video_file_path, processing_set):
 
-    output_video_path = os.path.join(
-        output_folder_path, video_file.replace('.mp4', '-processing.mp4'))
-
-    # 检查输出目录是否已存在同名视频文件，且排除 -processing 的文件
-    existing_files = os.listdir(output_folder_path)
+    # 检查输出目录是否已存在同名视频文件，且排除 -processing 的文件 未分类不知其具体输出目录则全部包含
+    existing_files = os.walk(sortover_video_dir)
     if video_file in existing_files or video_file.replace('.mp4', '-processing.mp4') in existing_files:
-        print(f"输出目录已存在视频文件，跳过处理: {output_video_path}")
+        print(f"输出目录已存在视频文件，跳过处理: {video_file_path}")
         return
 
-    if os.path.exists(header_image_path) and os.path.exists(tail_image_path):
+    # 不知其分类则不知其haed与tail对应分类 存在性需要手动确认 程序跳过确认 直接添加
+    with processing_lock:
+        if video_file in processing_set:
+            print(f"视频文件 {video_file} 正在处理中，跳过")
+            return
         processing_set.add(video_file)
-        try:
-            process_video(input_video_path, header_image_path,
-                          tail_image_path, output_video_path)
-            # 处理完成后，重命名输出文件
-            final_output_video_path = os.path.join(
-                output_folder_path, video_file)
-            os.rename(output_video_path, final_output_video_path)
+    try:
+        result = process_video(video_file, video_file_path, sortover_video_dir)
+        # 处理完成后，重命名输出文件
+        if result != "":
+            os.rename(result, result.replace(('-processing.mp4', '.mp4')))
             print(f"处理完成: {video_file}")
-        finally:
+    finally:
+        # 确保处理结束后，从 processing_set 中移除
+        with processing_lock:
             processing_set.remove(video_file)
-    else:
-        print(f"图片文件缺失，跳过视频文件: {video_file}")
 
 
 def is_file_completed(filepath, check_interval=0.1):
@@ -161,20 +142,17 @@ def monitor_directory(input_video_dir, cut_image_dir, output_video_dir, processi
     total_files = 0  # 总文件数
     while True:
         new_files_count = 0  # 新文件计数
-        for folder_name in os.listdir(input_video_dir):
-            folder_path = os.path.join(input_video_dir, folder_name)
-            if os.path.isdir(folder_path):
-                for video_file in os.listdir(folder_path):
-                    if video_file.lower().endswith('.mp4') and video_file not in processed_files:
-                        video_file_path = os.path.join(folder_path, video_file)
+        if os.path.isdir(input_video_dir):
+            for video_file in os.listdir(input_video_dir):
+                if video_file.lower().endswith('.mp4') and video_file not in processed_files:
+                    video_file_path = os.path.join(input_video_dir, video_file)
 
-                        # 检查文件是否传输完成（循环检测）
-                        if is_file_completed(video_file_path):
-                            processed_files.add(video_file)
-                            queue.put((video_file, folder_path, os.path.join(
-                                cut_image_dir, folder_name), os.path.join(output_video_dir, folder_name)))
-                            new_files_count += 1
-                            total_files += 1  # 更新总文件数
+                    # 检查文件是否传输完成（循环检测）
+                    if is_file_completed(video_file_path):
+                        processed_files.add(video_file)
+                        queue.put((video_file, video_file_path))
+                        new_files_count += 1
+                        total_files += 1  # 更新总文件数
         if new_files_count > 0:
             print(f"检测到 {new_files_count} 个新文件，当前总文件数: {total_files}")
         time.sleep(1)  # 每隔1秒检查一次目录
@@ -230,7 +208,11 @@ def main_concurrent(input_video_dir, cut_image_dir, output_video_dir):
 
 
 if __name__ == "__main__":
-    input_video_dir = "/Users/snowfish/Desktop/demo-cut/source/mp4-in"
+    sort_video_dir = "/Users/snowfish/Desktop/demo-cut/source/mp4-sort"
     cut_image_dir = "/Users/snowfish/Desktop/demo-cut/source/cut"
-    output_video_dir = "/Users/snowfish/Desktop/demo-cut/source/mp4-out"
-    main_concurrent(input_video_dir, cut_image_dir, output_video_dir)
+    sortover_video_dir = "/Users/snowfish/Desktop/demo-cut/source/mp4-in"
+    processing_lock = threading.Lock()
+    # 获取对比截图目录下的一级子目录列表
+    subdirectories = [d for d in os.listdir(
+        cut_image_dir) if os.path.isdir(os.path.join(cut_image_dir, d))]
+    main_concurrent(sort_video_dir, cut_image_dir, sort_video_dir)
