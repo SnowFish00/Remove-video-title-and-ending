@@ -23,7 +23,7 @@ def get_gray_image(image):
     return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
 
-def find_last_match_frame(video_frames, header_gray, tolerance=0.5):
+def find_last_match_frame(video_frames, header_gray, tolerance=0.9):
     """找到与 header 图像匹配的最后一帧"""
     last_matched_frame_index = -1
     for i, frame in enumerate(video_frames):
@@ -35,7 +35,7 @@ def find_last_match_frame(video_frames, header_gray, tolerance=0.5):
     return last_matched_frame_index
 
 
-def find_first_match_frame(video_frames, tail_gray, tolerance=0.5):
+def find_first_match_frame(video_frames, tail_gray, tolerance=0.9):
     """找到与 tail 图像匹配的第一帧"""
     for i, frame in enumerate(video_frames):
         gray_frame = get_gray_image(frame)
@@ -60,9 +60,9 @@ def process_video(video_file, input_video_path, output_video_base):
     for cut_class in subdirectories:
         # 加载图片并调整大小
         header_img = cv2.imread(os.path.join(
-            cut_image_dir), cut_class, 'header-after.png')
-        tail_img = cv2.imread(os.path.join(cut_image_dir),
-                              cut_class, 'tail-before.png')
+            cut_image_dir, cut_class, 'header-after.png'))
+        tail_img = cv2.imread(os.path.join(cut_image_dir,
+                              cut_class, 'tail-before.png'))
         first_frame = front_clip.get_frame(0)
         header_resized = resize_image_to_video(header_img, first_frame)
         tail_resized = resize_image_to_video(tail_img, first_frame)
@@ -111,8 +111,11 @@ def process_video_concurrently(video_file, video_file_path, processing_set):
         result = process_video(video_file, video_file_path, sortover_video_dir)
         # 处理完成后，重命名输出文件
         if result != "":
-            os.rename(result, result.replace(('-processing.mp4', '.mp4')))
-            print(f"处理完成: {video_file}")
+            try:
+                os.rename(result, result.replace('-processing.mp4', '.mp4'))
+                print(f"处理完成并重命名: {video_file}")
+            except Exception as e:
+                print(f"重命名失败: {e}")
     finally:
         # 确保处理结束后，从 processing_set 中移除
         with processing_lock:
